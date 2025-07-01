@@ -38,6 +38,8 @@ except ImportError:
 DATA_DIR = 'data'
 COLUMNS = ['subject', 'age', 'sex', 'b0']
 state = {
+    'INIT': pd.DataFrame(columns=COLUMNS),
+    'train': pd.DataFrame(columns=COLUMNS),
     'val': pd.DataFrame(columns=COLUMNS),
     'test': pd.DataFrame(columns=COLUMNS)
 }
@@ -55,6 +57,141 @@ def setup_sample_data():
 
 
 def _create_data_panel(data_key: str, title: str):
+    """Creates a full set of data control widgets for a single dataset (e.g., 'val' or 'test')."""
+    # --- Widget Definition ---
+    output = widgets.Output(layout={'border': '1px solid black', 'padding': '5px'})
+    create_btn = widgets.Button(description=f'New {title}', button_style='success', icon='plus-square')
+    try:
+        csv_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.csv')]
+    except FileNotFoundError:
+        csv_files = []
+    file_selector = widgets.Dropdown(options=csv_files, description='CSV File:', disabled=not csv_files)
+    add_data_btn = widgets.Button(description='Add from CSV', button_style='info', icon='upload')
+    reset_index_btn = widgets.Button(description='Reset Index', button_style='warning', icon='refresh')
+    split_data_btn = widgets.Button(description='Split data', button_style='warning', icon='refresh')
+    save_filename_input = widgets.Text(value='new_dataset.csv', description='Save As:')
+    save_btn = widgets.Button(description='Save to CSV', button_style='primary', icon='save')
+    subject_selector = widgets.SelectMultiple(description='Subjects:', disabled=True, rows=8)
+    delete_btn = widgets.Button(description='Delete Selected', button_style='danger', icon='trash')
+
+    # --- Helper & Event Handlers ---
+    def update_subject_selector():
+        df = state[data_key]
+        if not df.empty and 'subject' in df.columns:
+            subjects = sorted(df['subject'].unique().tolist())
+            subject_selector.options = subjects
+            subject_selector.rows = min(10, len(subjects))
+            subject_selector.disabled = False
+        else:
+            subject_selector.options = []
+            subject_selector.disabled = True
+
+    def on_create_clicked(b):
+        with output:
+            clear_output(wait=True)
+            state[data_key] = pd.DataFrame(columns=COLUMNS)
+            print("Empty dataset created.")
+            update_subject_selector()
+            display(state[data_key])
+
+    def on_add_data_clicked(b):
+        csv_file = file_selector.value
+        if not csv_file: return
+        file_path = os.path.join(DATA_DIR, csv_file)
+        with output:
+            clear_output(wait=True)
+            try:
+                new_data = pd.read_csv(file_path)
+                state[data_key] = pd.concat([state[data_key], new_data], ignore_index=True)
+                print(f"Data from '{csv_file}' added successfully.")
+                update_subject_selector()
+                display(state[data_key])
+            except Exception as e:
+                print(f"Error reading file '{csv_file}': {e}")
+                display(state[data_key])
+
+    def on_delete_clicked(b):
+        selected_subjects = subject_selector.value
+        with output:
+            clear_output(wait=True)
+            if not selected_subjects:
+                print("No subjects selected for deletion.")
+            else:
+                df = state[data_key]
+                initial_rows = len(df)
+                state[data_key] = df[~df['subject'].isin(selected_subjects)].reset_index(drop=True)
+                final_rows = len(state[data_key])
+                print(f"Deleted {initial_rows - final_rows} row(s) for subjects: {', '.join(selected_subjects)}")
+            update_subject_selector()
+            display(state[data_key])
+
+    def on_reset_index_clicked(b):
+        with output:
+            clear_output(wait=True)
+            if not state[data_key].empty:
+                state[data_key] = state[data_key].reset_index(drop=True)
+                print("Dataset index has been reset.")
+            else:
+                print("Dataset is empty. Nothing to reset.")
+            display(state[data_key])
+    
+    def on_split_data_clicked(b):
+        with output:
+            clear_output(wait=True)
+            if state[data_key].empty:
+                print("Dataset is empty. Nothing to split.")
+                return
+            else: 
+                state['train'] = state[data_key].sample(frac=0.7, random_state=42)
+                state['val'] = state[data_key].drop(state['train'].index).sample(frac=0.5, random_state=42)
+                state['test'] = state[data_key].drop(state['train'].index).drop(state['val'].index)
+            print("Dataset split into train, val, and test sets.")
+            display(state[data_key])
+
+    def on_save_clicked(b):
+        filename = save_filename_input.value.strip()
+        with output:
+            clear_output(wait=True)
+            if state[data_key].empty or not filename:
+                print("Dataset is empty or filename is missing.")
+                display(state[data_key])
+                return
+            if not filename.lower().endswith('.csv'):
+                filename += '.csv'
+            save_path = os.path.join(DATA_DIR, filename)
+            try:
+                state[data_key].to_csv(save_path, index=False)
+                print(f"Dataset saved successfully to '{save_path}'")
+                file_selector.options = sorted([f for f in os.listdir(DATA_DIR) if f.endswith('.csv')])
+            except Exception as e:
+                print(f"Error saving file: {e}")
+            display(state[data_key])
+
+    # --- Link Handlers to Buttons ---
+    create_btn.on_click(on_create_clicked)
+    add_data_btn.on_click(on_add_data_clicked)
+    split_data_btn.on_click(on_split_data_clicked)
+    delete_btn.on_click(on_delete_clicked)
+    reset_index_btn.on_click(on_reset_index_clicked)
+    save_btn.on_click(on_save_clicked)
+
+    # --- GUI Layout ---
+    layout = widgets.VBox([
+        widgets.HBox([create_btn, add_data_btn, split_data_btn, reset_index_btn]),
+        file_selector,
+        widgets.HBox([save_filename_input, save_btn]),
+        widgets.HBox([subject_selector, delete_btn]),
+        output
+    ], layout={'padding': '10px'})
+
+    with output:
+        print(f"{title} panel is ready.")
+        update_subject_selector()
+        display(state[data_key])
+
+    return layout
+
+def _create_data_panel_other(data_key: str, title: str):
     """Creates a full set of data control widgets for a single dataset (e.g., 'val' or 'test')."""
     # --- Widget Definition ---
     output = widgets.Output(layout={'border': '1px solid black', 'padding': '5px'})
@@ -160,7 +297,7 @@ def _create_data_panel(data_key: str, title: str):
 
     # --- GUI Layout ---
     layout = widgets.VBox([
-        widgets.HBox([create_btn, add_data_btn, reset_index_btn]),
+        reset_index_btn,
         file_selector,
         widgets.HBox([save_filename_input, save_btn]),
         widgets.HBox([subject_selector, delete_btn]),
@@ -176,12 +313,16 @@ def _create_data_panel(data_key: str, title: str):
 
 def create_data_control_gui():
     """Creates the data control tab with separate panels for val and test data."""
-    val_panel = _create_data_panel('val', 'Validation Dataset')
-    test_panel = _create_data_panel('test', 'Test Dataset')
+    init_panel= _create_data_panel('INIT', 'INIT Dataset')
+    train_panel= _create_data_panel_other('train', 'Training Dataset')
+    val_panel = _create_data_panel_other('val', 'Validation Dataset')
+    test_panel = _create_data_panel_other('test', 'Test Dataset')
     
-    accordion = widgets.Accordion(children=[val_panel, test_panel])
-    accordion.set_title(0, 'Validation Dataset')
-    accordion.set_title(1, 'Test Dataset')
+    accordion = widgets.Accordion(children=[init_panel,train_panel,val_panel, test_panel])
+    accordion.set_title(0, 'INIT Dataset')
+    accordion.set_title(1, 'Training Dataset')
+    accordion.set_title(2, 'Validation Dataset')
+    accordion.set_title(3, 'Test Dataset')
     
     return accordion
 
